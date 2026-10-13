@@ -40,10 +40,12 @@ def execute(source, platform, mode, log, environment):
         environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "0"
         commands = [
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
-             "probeDevice", "probeSdkCalls", "probeSdkVertexArrays", "probeSkiaSnapshots",
+             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSkiaSnapshots",
              "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
             [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
         ]
+        if mode == "probes":
+            commands = commands[:1]
     for command in commands:
         completed = subprocess.run(command, cwd=source, env=environment, stdout=log,
                                    stderr=subprocess.STDOUT, timeout=4800)
@@ -72,7 +74,7 @@ def seal(source, private_log, destination, platform, key, exit_code):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", required=True, choices=["macos-arm64", "macos-x64"])
-    parser.add_argument("--mode", required=True, choices=["scene", "package"])
+    parser.add_argument("--mode", required=True, choices=["scene", "package", "probes"])
     args = parser.parse_args()
     key = bytes.fromhex(os.environ.pop("ARCADIUM_BUILD_KEY"))
     if len(key) != 32:
