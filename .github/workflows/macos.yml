@@ -1,0 +1,56 @@
+name: Encrypted macOS build and tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        description: Task
+        default: scene
+        options: [scene, package]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            platform: macos-x64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Prepare encryption runtime
+        run: |
+          python3 -m venv "$RUNNER_TEMP/runner-env"
+          "$RUNNER_TEMP/runner-env/bin/pip" install cryptography==47.0.0
+      - name: Execute private task
+        env:
+          ARCADIUM_BUILD_KEY: ${{ secrets.ARCADIUM_BUILD_KEY }}
+        run: |
+          "$RUNNER_TEMP/runner-env/bin/python" worker.py --platform '${{ matrix.platform }}' --mode '${{ inputs.mode }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: encrypted-result-${{ matrix.platform }}
+          path: encrypted-output/*.enc
+          if-no-files-found: error
+          retention-days: 1
