@@ -39,7 +39,7 @@ def execute(source, platform, mode, log, environment):
         commands = [
             [sys.executable, "scripts/build_macos.py", "--target", target],
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
-             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain",
+             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache",
              "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
             [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
         ]
@@ -47,7 +47,7 @@ def execute(source, platform, mode, log, environment):
         environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "0"
         commands = [
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
-             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSkiaSnapshots",
+             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache", "probeSkiaSnapshots",
              "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
             [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
         ]
