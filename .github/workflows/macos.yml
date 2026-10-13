@@ -8,6 +8,11 @@ on:
         description: Task
         default: scene
         options: [scene, package, probes]
+      platform:
+        type: choice
+        description: Architecture
+        default: both
+        options: [both, intel, arm64]
 
 permissions:
   contents: read
@@ -17,15 +22,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            platform: macos-arm64
-            target: aarch64-apple-darwin
-          - runner: macos-15-intel
-            platform: macos-x64
-            target: x86_64-apple-darwin
+        runner: ${{ fromJSON(inputs.platform == 'intel' && '["macos-15-intel"]' || inputs.platform == 'arm64' && '["macos-15"]' || '["macos-15","macos-15-intel"]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 100
+    env:
+      BUILD_PLATFORM: ${{ matrix.runner == 'macos-15' && 'macos-arm64' || 'macos-x64' }}
+      BUILD_TARGET: ${{ matrix.runner == 'macos-15' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -33,7 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: ${{ env.BUILD_TARGET }}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
@@ -46,11 +48,11 @@ jobs:
         env:
           ARCADIUM_BUILD_KEY: ${{ secrets.ARCADIUM_BUILD_KEY }}
         run: |
-          "$RUNNER_TEMP/runner-env/bin/python" worker.py --platform '${{ matrix.platform }}' --mode '${{ inputs.mode }}'
+          "$RUNNER_TEMP/runner-env/bin/python" worker.py --platform '${{ env.BUILD_PLATFORM }}' --mode '${{ inputs.mode }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: encrypted-result-${{ matrix.platform }}
+          name: encrypted-result-${{ env.BUILD_PLATFORM }}
           path: encrypted-output/*.enc
           if-no-files-found: error
           retention-days: 1
