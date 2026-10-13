@@ -44,13 +44,16 @@ def execute(source, platform, mode, log, environment):
             [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
         ]
     else:
-        environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "0"
+        environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1" if mode=="benchmark" and platform=="macos-arm64" else "0"
         commands = [
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
              "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache", "probeSkiaSnapshots",
              "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
             [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
         ]
+        if mode == "benchmark":
+            commands[0].append("probeSdkFrames")
+            commands[1].append("--benchmark")
         if mode == "probes":
             commands = commands[:1]
     if mode == "probes" and platform == "macos-arm64":
@@ -91,7 +94,7 @@ def seal(source, private_log, destination, platform, key, exit_code):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", required=True, choices=["macos-arm64", "macos-x64"])
-    parser.add_argument("--mode", required=True, choices=["scene", "package", "probes"])
+    parser.add_argument("--mode", required=True, choices=["scene", "package", "probes", "benchmark"])
     args = parser.parse_args()
     key = bytes.fromhex(os.environ.pop("ARCADIUM_BUILD_KEY"))
     if len(key) != 32:

@@ -7,7 +7,7 @@ on:
         type: choice
         description: Task
         default: scene
-        options: [scene, package, probes]
+        options: [scene, package, probes, benchmark]
       platform:
         type: choice
         description: Architecture
