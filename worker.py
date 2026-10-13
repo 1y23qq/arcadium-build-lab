@@ -46,6 +46,16 @@ def execute(source, platform, mode, log, environment):
         ]
         if mode == "probes":
             commands = commands[:1]
+    if mode == "probes" and platform == "macos-arm64":
+        results = []
+        for metal_arguments in ["0", "1"]:
+            environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = metal_arguments
+            log.write(("Metal argument buffers: " + metal_arguments + "\n").encode())
+            log.flush()
+            command = commands[0] if metal_arguments == "0" else ["bash", "game-branding/gradlew", "-p", "game-renderer", "probeSdkTerrain"]
+            results.append(subprocess.run(command, cwd=source, env=environment, stdout=log,
+                                          stderr=subprocess.STDOUT, timeout=4800).returncode)
+        return next((result for result in results if result), 0)
     for command in commands:
         completed = subprocess.run(command, cwd=source, env=environment, stdout=log,
                                    stderr=subprocess.STDOUT, timeout=4800)
