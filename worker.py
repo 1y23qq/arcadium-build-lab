@@ -40,7 +40,7 @@ def execute(source, platform, mode, log, environment):
             [sys.executable, "scripts/build_macos.py", "--target", target],
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
              "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache",
-             "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
+             "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated", "probeSdkFrames"],
             [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
         ]
     else:
