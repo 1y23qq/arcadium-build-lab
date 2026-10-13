@@ -35,7 +35,14 @@ def execute(source, platform, mode, log, environment):
     target = "aarch64-apple-darwin" if platform == "macos-arm64" else "x86_64-apple-darwin"
     environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2")
     if mode == "package":
-        commands = [[sys.executable, "scripts/build_macos.py", "--target", target]]
+        environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "0" if platform == "macos-x64" else "1"
+        commands = [
+            [sys.executable, "scripts/build_macos.py", "--target", target],
+            ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
+             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain",
+             "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
+            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
+        ]
     else:
         environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "0"
         commands = [
