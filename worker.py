@@ -41,7 +41,7 @@ def execute(source, platform, mode, log, environment):
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
              "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache",
              "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated", "probeSdkFrames"],
-            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
+            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target, "--benchmark"]
         ]
     else:
         environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1" if mode=="benchmark" and platform=="macos-arm64" else "0"
@@ -58,6 +58,8 @@ def execute(source, platform, mode, log, environment):
         if mode == "probes":
             commands = commands[:1]
     test_mod=source / "build/ci-test-components/ArcadiumVulkanGameTest-0.2.6.jar"
+    if mode == "package" and (source / "build/ci-benchmark-baseline").is_dir():
+        commands[-1].extend(["--baseline-components","build/ci-benchmark-baseline"])
     if test_mod.is_file():
         for command in commands:
             if "scripts/run_macos_vulkan_scene.py" in command:
