@@ -54,6 +54,7 @@ def execute(source, platform, mode, log, environment):
         if mode == "benchmark":
             commands[0].append("probeSdkFrames")
             commands[1].append("--benchmark")
+            if (source / "build/ci-benchmark-baseline").is_dir(): commands[1].extend(["--baseline-components","build/ci-benchmark-baseline"])
         if mode == "probes":
             commands = commands[:1]
     if mode == "probes" and platform == "macos-arm64":
