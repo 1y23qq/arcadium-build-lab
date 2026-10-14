@@ -117,6 +117,14 @@ def execute(source, platform, mode, log, environment):
     environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2",
                        RUSTUP_TOOLCHAIN="stable")
     if mode == "helpers":
+        prototype = source / "build/ci-native-baseline/keychain-prototype.json"
+        if prototype.is_file():
+            config = json.loads(prototype.read_text(encoding="utf-8"))
+            if config != {"type": "keychain-prototype", "iterations": 32}:
+                raise ValueError("Invalid Keychain prototype fixture")
+            return subprocess.run([sys.executable, "scripts/run_macos_keychain_prototype.py", "--iterations", "32",
+                                   "--output", "build/macos-native-helper-tests.json"], cwd=source,
+                                  env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600).returncode
         executable = native_baseline(source, platform)
         return subprocess.run([sys.executable, "scripts/diagnose_native_helpers.py", "--executable", str(executable),
                                "--output", "build/macos-native-helper-tests.json"], cwd=source,
