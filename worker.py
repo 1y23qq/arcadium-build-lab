@@ -132,12 +132,10 @@ def execute(source, platform, mode, log, environment):
     verify_components(source)
     commands = [
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
-         "-p", "arcadium_auth", "-p", "arcadium_update", "-p", "arcadium_common", "-p", "arcadium_java",
+         "-p", "arcadium_auth", "--lib", "--tests", "--", "--test-threads=1"],
+        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+         "-p", "arcadium_update", "-p", "arcadium_common", "-p", "arcadium_java",
          "-p", "arcadium_core", "-p", "arcadium_discord", "--lib", "--", "--test-threads=1"],
-        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
-         "-p", "arcadium_auth", "--test", "concurrent_store", "--", "--test-threads=1"],
-        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
-         "-p", "arcadium_auth", "--test", "offline", "--", "--test-threads=1"],
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
          "-p", "arcadium_app", "--lib", "account_service", "--", "--test-threads=1"],
         [sys.executable, "scripts/test_macos_updater.py"],
@@ -146,12 +144,14 @@ def execute(source, platform, mode, log, environment):
          f"target/{target}/macos-testing/Arcadium", "--output", "build/macos-native-helper-tests.json"],
     ]
     for index, command in enumerate(commands):
+        print(f"Private build step {index + 1}/{len(commands)} started", flush=True)
         log.write(f"Private build step {index + 1}/{len(commands)}\n".encode())
         log.flush()
         result = subprocess.run(command, cwd=source, env=environment, stdout=log,
                                 stderr=subprocess.STDOUT, timeout=7200)
         if result.returncode:
             return result.returncode
+        print(f"Private build step {index + 1}/{len(commands)} completed", flush=True)
     verify_components(source)
     return 0
 
