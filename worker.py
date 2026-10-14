@@ -41,7 +41,7 @@ def execute(source, platform, mode, log, environment):
             ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
              "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache",
              "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated", "probeSdkFrames"],
-            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target, "--benchmark"]
+            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target, "--benchmark", "--terrain-benchmark"]
         ]
     else:
         environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1" if mode=="benchmark" and platform=="macos-arm64" else "0"
@@ -54,6 +54,7 @@ def execute(source, platform, mode, log, environment):
         if mode == "benchmark":
             commands[0].append("probeSdkFrames")
             commands[1].append("--benchmark")
+            commands[1].append("--terrain-benchmark")
             if (source / "build/ci-benchmark-baseline").is_dir(): commands[1].extend(["--baseline-components","build/ci-benchmark-baseline"])
         if mode == "probes":
             commands = commands[:1]
