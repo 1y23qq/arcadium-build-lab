@@ -57,6 +57,11 @@ def execute(source, platform, mode, log, environment):
             if (source / "build/ci-benchmark-baseline").is_dir(): commands[1].extend(["--baseline-components","build/ci-benchmark-baseline"])
         if mode == "probes":
             commands = commands[:1]
+    test_mod=source / "build/ci-test-components/ArcadiumVulkanGameTest-0.2.6.jar"
+    if test_mod.is_file():
+        for command in commands:
+            if "scripts/run_macos_vulkan_scene.py" in command:
+                command.extend(["--test-mod","build/ci-test-components/ArcadiumVulkanGameTest-0.2.6.jar"])
     if mode == "probes" and platform == "macos-arm64":
         results = []
         for metal_arguments in ["0", "1"]:
