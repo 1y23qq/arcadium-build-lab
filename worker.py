@@ -60,10 +60,67 @@ def verify_components(source):
             raise ValueError("Bundled client component checksum mismatch")
 
 
-def execute(source, platform, log, environment):
+def native_baseline(source, platform):
+    directory = source / "build/ci-native-baseline" / platform
+    if not directory.is_dir():
+        directory = directory.parent
+    manifest = json.loads((directory / f"package-manifest-{platform}.json").read_text(encoding="utf-8"))
+    if manifest.get("product") != "Arcadium Client" or manifest.get("platform") != platform:
+        raise ValueError("Invalid native baseline manifest")
+    name = manifest["archive"]
+    if Path(name).name != name or name != f"ArcadiumClient-{manifest['launcherVersion']}-{platform}.app.tar.gz":
+        raise ValueError("Invalid native baseline name")
+    path = directory / name
+    with path.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != manifest["installerSha256"]:
+            raise ValueError("Native baseline archive checksum mismatch")
+    destination = source / "build/mac-helpers-baseline" / platform
+    destination.mkdir(parents=True, exist_ok=False)
+    files = {entry["path"]: entry["sha256"] for entry in manifest["files"]}
+    seen = set()
+    seen_files = set()
+    size = 0
+    with tarfile.open(path, "r:gz") as archive:
+        for entry in archive:
+            relative = PurePosixPath(entry.name)
+            if (not relative.parts or relative.parts[0] != "Arcadium Client.app"
+                    or relative.is_absolute() or "\\" in entry.name
+                    or any(part in {".", ".."} for part in relative.parts)
+                    or str(relative) != entry.name or entry.name in seen
+                    or not (entry.isdir() or entry.isfile())):
+                raise ValueError("Invalid native baseline archive entry")
+            seen.add(entry.name)
+            size += entry.size
+            if len(seen) > 10_000 or size > 1024 * 1024 * 1024:
+                raise ValueError("Native baseline exceeds update archive limits")
+            if entry.isfile():
+                name = relative.relative_to("Arcadium Client.app").as_posix()
+                if name not in files:
+                    raise ValueError("Unlisted native baseline file")
+                with archive.extractfile(entry) as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != files[name]:
+                        raise ValueError("Native baseline payload checksum mismatch")
+                seen_files.add(name)
+            archive.extract(entry, destination, filter="data")
+    if seen_files != set(files):
+        raise ValueError("Native baseline payload list mismatch")
+    executable = destination / "Arcadium Client.app/Contents/MacOS/Arcadium"
+    arch = "arm64" if platform == "macos-arm64" else "x86_64"
+    subprocess.run(["/usr/bin/lipo", str(executable), "-verify_arch", arch], check=True, capture_output=True)
+    subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(executable.parents[2])],
+                   check=True, capture_output=True)
+    return executable
+
+
+def execute(source, platform, mode, log, environment):
     target = "aarch64-apple-darwin" if platform == "macos-arm64" else "x86_64-apple-darwin"
     environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2",
                        RUSTUP_TOOLCHAIN="stable")
+    if mode == "helpers":
+        executable = native_baseline(source, platform)
+        return subprocess.run([sys.executable, "scripts/diagnose_native_helpers.py", "--executable", str(executable),
+                               "--output", "build/macos-native-helper-tests.json"], cwd=source,
+                              env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600).returncode
     verify_components(source)
     commands = [
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
@@ -113,7 +170,7 @@ def seal(source, private_log, destination, platform, key, exit_code):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", required=True, choices=["macos-arm64", "macos-x64"])
-    parser.add_argument("--mode", choices=["package"], default="package")
+    parser.add_argument("--mode", choices=["package", "helpers"], default="package")
     args = parser.parse_args()
     try:
         key = bytes.fromhex(os.environ.pop("ARCADIUM_BUILD_KEY", ""))
@@ -131,7 +188,7 @@ def main():
     with private_log.open("wb") as log:
         try:
             unpack(repository, source, key)
-            exit_code = execute(source, args.platform, log, dict(os.environ))
+            exit_code = execute(source, args.platform, args.mode, log, dict(os.environ))
         except Exception:
             log.write(traceback.format_exc().encode())
     seal(source, private_log, repository / "encrypted-output" / f"{args.platform}.enc",
