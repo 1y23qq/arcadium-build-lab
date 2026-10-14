@@ -56,6 +56,7 @@ def execute(source, platform, mode, log, environment):
             commands[1].append("--benchmark")
             commands[1].append("--terrain-benchmark")
             if (source / "build/ci-benchmark-baseline").is_dir(): commands[1].extend(["--baseline-components","build/ci-benchmark-baseline"])
+        if mode == "scene": commands[1].extend(["--benchmark","--terrain-benchmark","--terrain-only"])
         if mode == "probes":
             commands = commands[:1]
     test_mod=source / "build/ci-test-components/ArcadiumVulkanGameTest-0.2.6.jar"
