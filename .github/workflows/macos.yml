@@ -1,4 +1,4 @@
-name: Encrypted macOS build and tests
+name: Encrypted macOS build
 
 on:
   workflow_dispatch:
@@ -6,8 +6,8 @@ on:
       mode:
         type: choice
         description: Task
-        default: scene
-        options: [scene, package, probes, benchmark]
+        default: package
+        options: [package]
       platform:
         type: choice
         description: Architecture
@@ -18,13 +18,13 @@ permissions:
   contents: read
 
 jobs:
-  run:
+  build:
     strategy:
       fail-fast: false
       matrix:
         runner: ${{ fromJSON(inputs.platform == 'intel' && '["macos-15-intel"]' || inputs.platform == 'arm64' && '["macos-15"]' || '["macos-15","macos-15-intel"]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 100
+    timeout-minutes: 180
     env:
       BUILD_PLATFORM: ${{ matrix.runner == 'macos-15' && 'macos-arm64' || 'macos-x64' }}
       BUILD_TARGET: ${{ matrix.runner == 'macos-15' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
@@ -36,15 +36,11 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ env.BUILD_TARGET }}
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
-        with:
-          distribution: temurin
-          java-version: '25'
       - name: Prepare encryption runtime
         run: |
           python3 -m venv "$RUNNER_TEMP/runner-env"
           "$RUNNER_TEMP/runner-env/bin/pip" install cryptography==47.0.0
-      - name: Execute private task
+      - name: Build private application
         env:
           ARCADIUM_BUILD_KEY: ${{ secrets.ARCADIUM_BUILD_KEY }}
         run: |

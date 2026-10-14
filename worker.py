@@ -1,116 +1,129 @@
 import argparse
-import gzip
 import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import tarfile
 import traceback
 import zipfile
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 
 SOURCE_AAD = b"Arcadium private build input v1"
 RESULT_AAD = b"Arcadium private build result v1"
 
 
 def unpack(repository, destination, key):
-    manifest = json.loads((repository / "payload/manifest.json").read_text())
-    pieces = []
-    for name in manifest["parts"]:
-        if Path(name).name != name:
-            raise ValueError("Invalid payload path")
-        pieces.append((repository / "payload" / name).read_bytes())
-    encrypted = b"".join(pieces)
-    if hashlib.sha256(encrypted).hexdigest() != manifest["sha256"]:
-        raise ValueError("Payload checksum mismatch")
-    archive = AESGCM(key).decrypt(encrypted[:12], encrypted[12:], SOURCE_AAD)
+    manifest = json.loads((repository / "payload/manifest.json").read_text(encoding="utf-8"))
+    parts = manifest.get("parts", [])
+    if manifest.get("format") != 1 or not parts or len(parts) > 100 or len(set(parts)) != len(parts):
+        raise ValueError("Invalid encrypted input manifest")
+    encrypted = bytearray()
+    for index, name in enumerate(parts):
+        if name != f"part-{index:03}.enc":
+            raise ValueError("Invalid encrypted input part")
+        encrypted.extend((repository / "payload" / name).read_bytes())
+    if len(encrypted) < 28 or hashlib.sha256(encrypted).hexdigest() != manifest["sha256"]:
+        raise ValueError("Encrypted input checksum mismatch")
+    archive = AESGCM(key).decrypt(bytes(encrypted[:12]), bytes(encrypted[12:]), SOURCE_AAD)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
-        source.extractall(destination, filter="data")
+        names = set()
+        size = 0
+        for entry in source:
+            name = PurePosixPath(entry.name)
+            if (not name.parts or name.is_absolute() or "\\" in entry.name
+                    or any(part in {".", ".."} for part in name.parts)
+                    or name.as_posix() != entry.name or entry.name in names
+                    or not (entry.isfile() or entry.isdir())):
+                raise ValueError("Invalid private source entry")
+            names.add(entry.name)
+            size += entry.size
+            if len(names) > 100_000 or size > 2 * 1024 * 1024 * 1024:
+                raise ValueError("Private source exceeds build limits")
+            source.extract(entry, destination, filter="data")
 
 
-def execute(source, platform, mode, log, environment):
+def verify_components(source):
+    catalog = json.loads((source / "distribution/oneclient-1.8.9.lock.json").read_text(encoding="utf-8"))
+    for entry in catalog["arcadiumComponents"]:
+        name = entry["file"]
+        if Path(name).name != name:
+            raise ValueError("Invalid client component name")
+        path = source / "packages/arcadium_common/assets/distribution" / name
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != entry["sha256"] or path.stat().st_size != entry["bytes"]:
+            raise ValueError("Bundled client component checksum mismatch")
+
+
+def execute(source, platform, log, environment):
     target = "aarch64-apple-darwin" if platform == "macos-arm64" else "x86_64-apple-darwin"
-    environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2")
-    if mode == "package":
-        environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "0" if platform == "macos-x64" else "1"
-        commands = [
-            [sys.executable, "scripts/build_macos.py", "--target", target],
-            ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
-             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache",
-             "probeSkiaSnapshots", "probeSdkLogicOps", "probeSdkLogicOpsEmulated", "probeSdkFrames"],
-            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target, "--benchmark", "--terrain-benchmark"]
-        ]
-    else:
-        environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1" if mode=="benchmark" and platform=="macos-arm64" else "0"
-        commands = [
-            ["bash", "game-branding/gradlew", "-p", "game-renderer", "test", ":agent:test",
-             "probeDevice", "probeSdkCalls", "probeSdkShaders", "probeSdkVertexArrays", "probeSdkTerrain", "probeSdkIndexCache", "probeSkiaSnapshots",
-             "probeSdkLogicOps", "probeSdkLogicOpsEmulated"],
-            [sys.executable, "scripts/run_macos_vulkan_scene.py", "--target", target]
-        ]
-        if mode == "benchmark":
-            commands[0].append("probeSdkFrames")
-            commands[1].append("--benchmark")
-            commands[1].append("--terrain-benchmark")
-            if (source / "build/ci-benchmark-baseline").is_dir(): commands[1].extend(["--baseline-components","build/ci-benchmark-baseline"])
-        if mode == "scene": commands[1].extend(["--benchmark","--terrain-benchmark","--terrain-only"])
-        if mode == "probes":
-            commands = commands[:1]
-    test_mod=source / "build/ci-test-components/ArcadiumVulkanGameTest-0.2.6.jar"
-    if mode == "package" and (source / "build/ci-benchmark-baseline").is_dir():
-        commands[-1].extend(["--baseline-components","build/ci-benchmark-baseline"])
-    if test_mod.is_file():
-        for command in commands:
-            if "scripts/run_macos_vulkan_scene.py" in command:
-                command.extend(["--test-mod","build/ci-test-components/ArcadiumVulkanGameTest-0.2.6.jar"])
-    if mode == "probes" and platform == "macos-arm64":
-        results = []
-        for metal_arguments in ["0", "1"]:
-            environment["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = metal_arguments
-            log.write(("Metal argument buffers: " + metal_arguments + "\n").encode())
-            log.flush()
-            command = commands[0] if metal_arguments == "0" else ["bash", "game-branding/gradlew", "-p", "game-renderer", "probeSdkTerrain"]
-            results.append(subprocess.run(command, cwd=source, env=environment, stdout=log,
-                                          stderr=subprocess.STDOUT, timeout=4800).returncode)
-        return next((result for result in results if result), 0)
-    for command in commands:
-        completed = subprocess.run(command, cwd=source, env=environment, stdout=log,
-                                   stderr=subprocess.STDOUT, timeout=4800)
-        if completed.returncode:
-            return completed.returncode
+    environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2",
+                       RUSTUP_TOOLCHAIN="stable")
+    verify_components(source)
+    commands = [
+        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+         "-p", "arcadium_auth", "-p", "arcadium_update", "-p", "arcadium_common", "-p", "arcadium_java",
+         "-p", "arcadium_core", "-p", "arcadium_discord", "--lib", "--", "--test-threads=1"],
+        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+         "-p", "arcadium_auth", "--test", "concurrent_store", "--", "--test-threads=1"],
+        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+         "-p", "arcadium_auth", "--test", "offline", "--", "--test-threads=1"],
+        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+         "-p", "arcadium_app", "--lib", "account_service", "--", "--test-threads=1"],
+        [sys.executable, "scripts/test_macos_updater.py"],
+        [sys.executable, "scripts/build_macos.py", "--target", target],
+        [sys.executable, "scripts/smoke_native_helpers.py", "--executable",
+         f"target/{target}/macos-testing/Arcadium", "--output", "build/macos-native-helper-tests.json"],
+    ]
+    for index, command in enumerate(commands):
+        log.write(f"Private build step {index + 1}/{len(commands)}\n".encode())
+        log.flush()
+        result = subprocess.run(command, cwd=source, env=environment, stdout=log,
+                                stderr=subprocess.STDOUT, timeout=7200)
+        if result.returncode:
+            return result.returncode
+    verify_components(source)
     return 0
 
 
 def seal(source, private_log, destination, platform, key, exit_code):
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as packed:
-        packed.write(private_log, "worker.log")
-        packed.writestr("status.json", json.dumps({"platform": platform, "exitCode": exit_code}))
-        for relative in ["build/macos-game-test", "build/installers",
-                         "game-renderer/build/test-results", "game-renderer/agent/build/test-results"]:
-            directory = source / relative
-            if directory.is_dir():
-                for file in directory.rglob("*"):
-                    if file.is_file():
-                        packed.write(file, file.relative_to(source).as_posix())
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+        archive.write(private_log, "worker.log")
+        archive.writestr("status.json", json.dumps({"platform": platform, "exitCode": exit_code}))
+        directory = source / "build/installers" / platform
+        if directory.is_dir():
+            for file in sorted(directory.iterdir()):
+                if file.is_file() and (file.suffix in {".dmg", ".json", ".txt", ".md"}
+                                      or file.name.endswith(".app.tar.gz")):
+                    archive.write(file, file.relative_to(source).as_posix())
+        test_result = source / "build/macos-native-helper-tests.json"
+        if test_result.is_file():
+            archive.write(test_result, test_result.relative_to(source).as_posix())
     nonce = os.urandom(12)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(nonce + AESGCM(key).encrypt(nonce, archive.getvalue(), RESULT_AAD))
+    destination.write_bytes(nonce + AESGCM(key).encrypt(nonce, output.getvalue(), RESULT_AAD))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", required=True, choices=["macos-arm64", "macos-x64"])
-    parser.add_argument("--mode", required=True, choices=["scene", "package", "probes", "benchmark"])
+    parser.add_argument("--mode", choices=["package"], default="package")
     args = parser.parse_args()
-    key = bytes.fromhex(os.environ.pop("ARCADIUM_BUILD_KEY"))
-    if len(key) != 32:
-        raise ValueError("Invalid build key")
+    try:
+        key = bytes.fromhex(os.environ.pop("ARCADIUM_BUILD_KEY", ""))
+        if len(key) != 32:
+            raise ValueError("Invalid key")
+    except ValueError:
+        print("Private build key is unavailable or invalid.", file=sys.stderr)
+        return 1
     repository = Path(__file__).resolve().parent
-    temporary = Path(os.environ["RUNNER_TEMP"]) / "arcadium-private-work"
+    temporary = Path(os.environ["RUNNER_TEMP"]) / f"arcadium-private-{args.platform}"
     source = temporary / "source"
     source.mkdir(parents=True, exist_ok=False)
     private_log = temporary / "worker.log"
@@ -118,14 +131,18 @@ def main():
     with private_log.open("wb") as log:
         try:
             unpack(repository, source, key)
-            exit_code = execute(source, args.platform, args.mode, log, dict(os.environ))
+            exit_code = execute(source, args.platform, log, dict(os.environ))
         except Exception:
             log.write(traceback.format_exc().encode())
-    seal(source, private_log, repository / "encrypted-output" / (args.platform + ".enc"),
+    seal(source, private_log, repository / "encrypted-output" / f"{args.platform}.enc",
          args.platform, key, exit_code)
-    print("Encrypted build diagnostics are ready. Exit code: " + str(exit_code))
-    raise SystemExit(exit_code)
+    print(f"Encrypted build diagnostics are ready. Exit code: {exit_code}")
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except Exception:
+        print("Private build infrastructure failed before encrypted results were ready.", file=sys.stderr)
+        raise SystemExit(1) from None
