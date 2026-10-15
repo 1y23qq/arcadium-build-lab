@@ -196,7 +196,7 @@ def execute(source, platform, mode, log, environment):
 
 def seal(source, private_log, destination, platform, key, exit_code):
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=1, strict_timestamps=False) as archive:
         archive.write(private_log, "worker.log")
         archive.writestr("status.json", json.dumps({"platform": platform, "exitCode": exit_code}))
         directory = source / "build/installers" / platform
