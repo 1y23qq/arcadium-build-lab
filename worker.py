@@ -147,12 +147,27 @@ def execute(source, platform, mode, log, environment):
                             stdout=log, stderr=subprocess.STDOUT, timeout=120)
     if result.returncode:
         return result.returncode
+    fixtures = source / "build/forge-compat-ci-fixtures.zip"
+    if fixtures.is_file():
+        java_commands = [
+            [sys.executable, "scripts/forge_compat_ci.py", "restore", "--bundle", str(fixtures),
+             "--source-root", str(source), "--home", str(Path.home())],
+            ["sh", "game-branding/gradlew", "-p", "forge-compat", "test", "--no-daemon"],
+            [sys.executable, "scripts/forge_compat_ci.py", "junit", "--bundle", str(fixtures),
+             "--results", "forge-compat/build/test-results/test", "--output", "build/forge-compat-ci-tests.json"],
+        ]
+        for index, command in enumerate(java_commands):
+            print(f"Private JVM verification step {index + 1}/{len(java_commands)} started", flush=True)
+            result = subprocess.run(command, cwd=source, env=environment, stdout=log,
+                                    stderr=subprocess.STDOUT, timeout=1200)
+            if result.returncode:
+                return result.returncode
     commands = [
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
          "-p", "arcadium_auth", "--lib", "--tests", "--", "--test-threads=1"],
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
          "-p", "arcadium_update", "-p", "arcadium_common", "-p", "arcadium_java",
-         "-p", "arcadium_core", "-p", "arcadium_discord", "--lib", "--", "--test-threads=1"],
+         "-p", "arcadium_core", "-p", "arcadium_content", "-p", "arcadium_discord", "--lib", "--", "--test-threads=1"],
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
          "-p", "arcadium_app", "--lib", "account_service", "--", "--test-threads=1"],
         [sys.executable, "scripts/test_macos_updater.py"],
@@ -193,6 +208,12 @@ def seal(source, private_log, destination, platform, key, exit_code):
         for name in ["macos-native-helper-tests.json", "native-cookie-consent-tests.json", "macos-compatibility-tests.json"]:
             test_result = source / "build" / name
             if test_result.is_file():
+                archive.write(test_result, test_result.relative_to(source).as_posix())
+        java_result = source / "build/forge-compat-ci-tests.json"
+        if java_result.is_file():
+            archive.write(java_result, java_result.relative_to(source).as_posix())
+        for test_result in sorted((source / "forge-compat/build/test-results/test").glob("TEST-*.xml")):
+            if test_result.is_file() and test_result.stat().st_size <= 16 * 1024 * 1024:
                 archive.write(test_result, test_result.relative_to(source).as_posix())
     nonce = os.urandom(12)
     destination.parent.mkdir(parents=True, exist_ok=True)

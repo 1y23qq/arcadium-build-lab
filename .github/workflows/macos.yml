@@ -38,6 +38,11 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ env.BUILD_TARGET }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        if: inputs.mode == 'package'
+        with:
+          distribution: temurin
+          java-version: '25'
       - name: Prepare encryption runtime
         run: |
           python3 -m venv "$RUNNER_TEMP/runner-env"
