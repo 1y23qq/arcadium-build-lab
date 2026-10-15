@@ -114,8 +114,12 @@ def native_baseline(source, platform):
 
 def execute(source, platform, mode, log, environment):
     target = "aarch64-apple-darwin" if platform == "macos-arm64" else "x86_64-apple-darwin"
-    environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2",
-                       RUSTUP_TOOLCHAIN="stable")
+    minimum = "13.0" if platform == "macos-arm64" else "12.0"
+    if environment.get("MACOSX_DEPLOYMENT_TARGET", minimum) != minimum:
+        raise ValueError("Workflow and platform deployment targets disagree")
+    target_dir = source / "target" / f"macos-{minimum}"
+    environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET=minimum, CARGO_BUILD_JOBS="2",
+                       RUSTUP_TOOLCHAIN="stable", CARGO_TARGET_DIR=str(target_dir))
     if mode == "consent":
         print("Private native cookie consent probe started", flush=True)
         result = subprocess.run([sys.executable, "scripts/test_native_cookie_consent.py", "--target", target,
@@ -138,6 +142,11 @@ def execute(source, platform, mode, log, environment):
                                "--output", "build/macos-native-helper-tests.json"], cwd=source,
                               env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600).returncode
     verify_components(source)
+    result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                             "-p", "test_macos_compatibility.py"], cwd=source, env=environment,
+                            stdout=log, stderr=subprocess.STDOUT, timeout=120)
+    if result.returncode:
+        return result.returncode
     commands = [
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
          "-p", "arcadium_auth", "--lib", "--tests", "--", "--test-threads=1"],
@@ -150,8 +159,12 @@ def execute(source, platform, mode, log, environment):
         [sys.executable, "scripts/test_native_cookie_consent.py", "--target", target,
          "--profile", "macos-testing", "--output", "build/native-cookie-consent-tests.json"],
         [sys.executable, "scripts/build_macos.py", "--target", target],
+        [sys.executable, "scripts/check_macos_compatibility.py", "--binary",
+         str(target_dir / target / "macos-testing/Arcadium"), "--target", target, "--minimum", minimum,
+         "--static-root", str(target_dir / target / "macos-testing"), "--fetch-sdk",
+         "--output", "build/macos-compatibility-tests.json"],
         [sys.executable, "scripts/smoke_native_helpers.py", "--executable",
-         f"target/{target}/macos-testing/Arcadium", "--output", "build/macos-native-helper-tests.json"],
+         str(target_dir / target / "macos-testing/Arcadium"), "--output", "build/macos-native-helper-tests.json"],
     ]
     for index, command in enumerate(commands):
         print(f"Private build step {index + 1}/{len(commands)} started", flush=True)
@@ -177,7 +190,7 @@ def seal(source, private_log, destination, platform, key, exit_code):
                 if file.is_file() and (file.suffix in {".dmg", ".json", ".txt", ".md"}
                                       or file.name.endswith(".app.tar.gz")):
                     archive.write(file, file.relative_to(source).as_posix())
-        for name in ["macos-native-helper-tests.json", "native-cookie-consent-tests.json"]:
+        for name in ["macos-native-helper-tests.json", "native-cookie-consent-tests.json", "macos-compatibility-tests.json"]:
             test_result = source / "build" / name
             if test_result.is_file():
                 archive.write(test_result, test_result.relative_to(source).as_posix())

@@ -28,6 +28,7 @@ jobs:
     env:
       BUILD_PLATFORM: ${{ matrix.runner == 'macos-15' && 'macos-arm64' || 'macos-x64' }}
       BUILD_TARGET: ${{ matrix.runner == 'macos-15' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.runner == 'macos-15' && '13.0' || '12.0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
