@@ -139,6 +139,8 @@ def execute(source, platform, mode, log, environment):
         ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
          "-p", "arcadium_app", "--lib", "account_service", "--", "--test-threads=1"],
         [sys.executable, "scripts/test_macos_updater.py"],
+        [sys.executable, "scripts/test_native_cookie_consent.py", "--target", target,
+         "--profile", "macos-testing", "--output", "build/native-cookie-consent-tests.json"],
         [sys.executable, "scripts/build_macos.py", "--target", target],
         [sys.executable, "scripts/smoke_native_helpers.py", "--executable",
          f"target/{target}/macos-testing/Arcadium", "--output", "build/macos-native-helper-tests.json"],
@@ -167,9 +169,10 @@ def seal(source, private_log, destination, platform, key, exit_code):
                 if file.is_file() and (file.suffix in {".dmg", ".json", ".txt", ".md"}
                                       or file.name.endswith(".app.tar.gz")):
                     archive.write(file, file.relative_to(source).as_posix())
-        test_result = source / "build/macos-native-helper-tests.json"
-        if test_result.is_file():
-            archive.write(test_result, test_result.relative_to(source).as_posix())
+        for name in ["macos-native-helper-tests.json", "native-cookie-consent-tests.json"]:
+            test_result = source / "build" / name
+            if test_result.is_file():
+                archive.write(test_result, test_result.relative_to(source).as_posix())
     nonce = os.urandom(12)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(nonce + AESGCM(key).encrypt(nonce, output.getvalue(), RESULT_AAD))
