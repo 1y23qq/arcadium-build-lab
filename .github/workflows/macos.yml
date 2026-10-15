@@ -7,7 +7,7 @@ on:
         type: choice
         description: Task
         default: package
-        options: [package, helpers]
+        options: [package, helpers, consent]
       platform:
         type: choice
         description: Architecture
@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        if: inputs.mode == 'package'
+        if: inputs.mode != 'helpers'
         with:
           toolchain: stable
           targets: ${{ env.BUILD_TARGET }}

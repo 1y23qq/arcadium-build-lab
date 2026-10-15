@@ -116,6 +116,14 @@ def execute(source, platform, mode, log, environment):
     target = "aarch64-apple-darwin" if platform == "macos-arm64" else "x86_64-apple-darwin"
     environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET="13.0", CARGO_BUILD_JOBS="2",
                        RUSTUP_TOOLCHAIN="stable")
+    if mode == "consent":
+        print("Private native cookie consent probe started", flush=True)
+        result = subprocess.run([sys.executable, "scripts/test_native_cookie_consent.py", "--target", target,
+                                 "--profile", "macos-testing", "--fetch-dependencies",
+                                 "--output", "build/native-cookie-consent-tests.json"],
+                                cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+        print("Private native cookie consent probe finished", flush=True)
+        return result.returncode
     if mode == "helpers":
         prototype = source / "build/ci-native-baseline/keychain-prototype.json"
         if prototype.is_file():
@@ -181,7 +189,7 @@ def seal(source, private_log, destination, platform, key, exit_code):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", required=True, choices=["macos-arm64", "macos-x64"])
-    parser.add_argument("--mode", choices=["package", "helpers"], default="package")
+    parser.add_argument("--mode", choices=["package", "helpers", "consent"], default="package")
     args = parser.parse_args()
     try:
         key = bytes.fromhex(os.environ.pop("ARCADIUM_BUILD_KEY", ""))
