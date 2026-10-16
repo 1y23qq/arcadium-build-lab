@@ -112,6 +112,27 @@ def native_baseline(source, platform):
     return executable
 
 
+def java_fixture_environment(source, fixtures, environment):
+    with zipfile.ZipFile(fixtures) as archive:
+        relative = json.loads(archive.read("manifest.json")).get("testGameDirectory")
+    if relative is None:
+        return environment
+    if not isinstance(relative, str):
+        raise ValueError("Invalid JVM fixture selection")
+    path = PurePosixPath(relative)
+    if (not relative.startswith("build/forge-compat/runtime-qa/") or path.as_posix() != relative
+            or any(part in {".", ".."} for part in path.parts) or any(c in relative for c in '\\:\"\r\n')):
+        raise ValueError("Invalid JVM fixture selection")
+    game = source.joinpath(*path.parts).resolve()
+    if not game.is_relative_to(source.resolve()) or not game.is_dir():
+        raise ValueError("The selected JVM fixture directory is unavailable")
+    configured = dict(environment)
+    for name in ("JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"):
+        configured.pop(name, None)
+    configured["JAVA_TOOL_OPTIONS"] = f'-Darcadium.forgeTest.gameDir="{game}"'
+    return configured
+
+
 def execute(source, platform, mode, log, environment):
     target = "aarch64-apple-darwin" if platform == "macos-arm64" else "x86_64-apple-darwin"
     minimum = "13.0" if platform == "macos-arm64" else "12.0"
@@ -158,7 +179,8 @@ def execute(source, platform, mode, log, environment):
         ]
         for index, command in enumerate(java_commands):
             print(f"Private JVM verification step {index + 1}/{len(java_commands)} started", flush=True)
-            result = subprocess.run(command, cwd=source, env=environment, stdout=log,
+            command_environment = java_fixture_environment(source, fixtures, environment) if index == 1 else environment
+            result = subprocess.run(command, cwd=source, env=command_environment, stdout=log,
                                     stderr=subprocess.STDOUT, timeout=1200)
             if result.returncode:
                 return result.returncode
