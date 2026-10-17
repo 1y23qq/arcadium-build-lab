@@ -236,11 +236,14 @@ def compiler_cache(source, repository, platform, key, log):
     if not target.is_relative_to(source.resolve()) or target.exists():
         raise ValueError("Compiler cache requires a new owned target directory")
     cache = repository / "encrypted-cache/native.enc"
+    before = None
     if cache.is_symlink() or cache.parent.is_symlink():
         raise ValueError("Compiler cache must not contain links")
     if cache.is_file():
         try:
             result = module.restore_cache(cache, target, key, identity)
+            if hasattr(module, "inventory"):
+                before = module.inventory(target)
             log.write((json.dumps({"compilerCache": "restored", **result}) + "\n").encode())
             print("Encrypted compiler cache restored", flush=True)
         except Exception:
@@ -252,7 +255,7 @@ def compiler_cache(source, repository, platform, key, log):
             print("Compiler cache unavailable; using a clean build", flush=True)
     else:
         print("No compiler cache is available for this architecture", flush=True)
-    return module, target, cache, identity
+    return module, target, cache, identity, before
 
 
 def seal(source, private_log, destination, platform, key, exit_code):
@@ -305,11 +308,15 @@ def main():
             cache = compiler_cache(source, repository, args.platform, key, log) if args.mode == "package" else None
             exit_code = execute(source, args.platform, args.mode, log, dict(os.environ))
             if exit_code == 0 and cache is not None:
-                module, target, destination, identity = cache
+                module, target, destination, identity, before = cache
                 try:
-                    result = module.save_cache(target, destination, key, identity)
-                    log.write((json.dumps({"compilerCache": "saved", **result}) + "\n").encode())
-                    print("Encrypted compiler cache is ready for reuse", flush=True)
+                    if before is not None and module.inventory(target) == before:
+                        log.write((json.dumps({"compilerCache": "unchanged", "files": len(before)}) + "\n").encode())
+                        print("Reusing the unchanged encrypted compiler cache", flush=True)
+                    else:
+                        result = module.save_cache(target, destination, key, identity)
+                        log.write((json.dumps({"compilerCache": "saved", **result}) + "\n").encode())
+                        print("Encrypted compiler cache is ready for reuse", flush=True)
                 except Exception:
                     log.write(traceback.format_exc().encode())
                     destination.unlink(missing_ok=True)
