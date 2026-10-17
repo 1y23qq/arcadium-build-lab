@@ -1,13 +1,11 @@
 {
   "format": 1,
-  "sha256": "8465dd47238e7262925543dd1be215dc3abf93b4a4dce1ff8e76fd450ec483c5",
+  "sha256": "d230da06aaf7d1cdf9d94da556005da183d3ebfd62cfa28e26a8ba6e70403288",
   "parts": [
     "part-000.enc",
     "part-001.enc",
     "part-002.enc",
     "part-003.enc",
-    "part-004.enc",
-    "part-005.enc",
-    "part-006.enc"
+    "part-004.enc"
   ]
 }
