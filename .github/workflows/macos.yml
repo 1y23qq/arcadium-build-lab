@@ -5,9 +5,9 @@ on:
     inputs:
       mode:
         type: choice
-        description: Task
+        description: Task (hotfix skips broad JVM and Rust suites)
         default: package
-        options: [package, helpers, consent]
+        options: [package, hotfix, helpers, consent]
       platform:
         type: choice
         description: Architecture
@@ -48,7 +48,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/runner-env"
           "$RUNNER_TEMP/runner-env/bin/pip" install cryptography==47.0.0
       - name: Restore encrypted compiler cache
-        if: inputs.mode == 'package'
+        if: inputs.mode == 'package' || inputs.mode == 'hotfix'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: encrypted-cache
