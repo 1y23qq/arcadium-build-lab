@@ -47,6 +47,13 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/runner-env"
           "$RUNNER_TEMP/runner-env/bin/pip" install cryptography==47.0.0
+      - name: Restore encrypted compiler cache
+        if: inputs.mode == 'package'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: encrypted-cache
+          key: arcadium-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: arcadium-native-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Build private application
         env:
           ARCADIUM_BUILD_KEY: ${{ secrets.ARCADIUM_BUILD_KEY }}

@@ -1,13 +1,16 @@
 import argparse
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
+import shutil
 import subprocess
 import sys
 import tarfile
 import traceback
+import tomllib
 import zipfile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -139,7 +142,8 @@ def execute(source, platform, mode, log, environment):
     if environment.get("MACOSX_DEPLOYMENT_TARGET", minimum) != minimum:
         raise ValueError("Workflow and platform deployment targets disagree")
     target_dir = source / "target" / f"macos-{minimum}"
-    environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET=minimum, CARGO_BUILD_JOBS="2",
+    jobs = min(os.cpu_count() or 2, 4 if platform == "macos-x64" else 2)
+    environment.update(SQLX_OFFLINE="true", MACOSX_DEPLOYMENT_TARGET=minimum, CARGO_BUILD_JOBS=str(jobs),
                        RUSTUP_TOOLCHAIN="stable", CARGO_TARGET_DIR=str(target_dir))
     if mode == "consent":
         print("Private native cookie consent probe started", flush=True)
@@ -216,6 +220,41 @@ def execute(source, platform, mode, log, environment):
     return 0
 
 
+def compiler_cache(source, repository, platform, key, log):
+    helper = source / "scripts/private_build_cache.py"
+    if not helper.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("private_build_cache", helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    minimum = "13.0" if platform == "macos-arm64" else "12.0"
+    config = tomllib.loads((source / "Cargo.toml").read_text(encoding="utf-8"))
+    identity = {"platform": platform, "minimum": minimum,
+                "rustc": subprocess.check_output(["rustc", "-Vv"], text=True).strip(),
+                "profiles": config["profile"]}
+    target = (source / "target" / f"macos-{minimum}").resolve()
+    if not target.is_relative_to(source.resolve()) or target.exists():
+        raise ValueError("Compiler cache requires a new owned target directory")
+    cache = repository / "encrypted-cache/native.enc"
+    if cache.is_symlink() or cache.parent.is_symlink():
+        raise ValueError("Compiler cache must not contain links")
+    if cache.is_file():
+        try:
+            result = module.restore_cache(cache, target, key, identity)
+            log.write((json.dumps({"compilerCache": "restored", **result}) + "\n").encode())
+            print("Encrypted compiler cache restored", flush=True)
+        except Exception:
+            log.write(traceback.format_exc().encode())
+            if target.exists():
+                if not target.is_relative_to(source.resolve()) or target.is_symlink():
+                    raise ValueError("Invalid owned cache destination")
+                shutil.rmtree(target)
+            print("Compiler cache unavailable; using a clean build", flush=True)
+    else:
+        print("No compiler cache is available for this architecture", flush=True)
+    return module, target, cache, identity
+
+
 def seal(source, private_log, destination, platform, key, exit_code):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=1, strict_timestamps=False) as archive:
@@ -263,7 +302,18 @@ def main():
     with private_log.open("wb") as log:
         try:
             unpack(repository, source, key)
+            cache = compiler_cache(source, repository, args.platform, key, log) if args.mode == "package" else None
             exit_code = execute(source, args.platform, args.mode, log, dict(os.environ))
+            if exit_code == 0 and cache is not None:
+                module, target, destination, identity = cache
+                try:
+                    result = module.save_cache(target, destination, key, identity)
+                    log.write((json.dumps({"compilerCache": "saved", **result}) + "\n").encode())
+                    print("Encrypted compiler cache is ready for reuse", flush=True)
+                except Exception:
+                    log.write(traceback.format_exc().encode())
+                    destination.unlink(missing_ok=True)
+                    print("Compiler cache could not be saved", flush=True)
         except Exception:
             log.write(traceback.format_exc().encode())
     seal(source, private_log, repository / "encrypted-output" / f"{args.platform}.enc",
