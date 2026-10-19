@@ -264,11 +264,6 @@ def execute(source, platform, mode, log, environment):
     if mode == "hotfix":
         return execute_hotfix(source, platform, target, target_dir, minimum, log, environment)
     verify_components(source)
-    result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts",
-                             "-p", "test_macos_compatibility.py"], cwd=source, env=environment,
-                            stdout=log, stderr=subprocess.STDOUT, timeout=120)
-    if result.returncode:
-        return result.returncode
     fixtures = source / "build/forge-compat-ci-fixtures.zip"
     if fixtures.is_file():
         java_commands = [
@@ -285,35 +280,68 @@ def execute(source, platform, mode, log, environment):
                                     stderr=subprocess.STDOUT, timeout=1200)
             if result.returncode:
                 return result.returncode
-    commands = [
-        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
-         "-p", "arcadium_auth", "--lib", "--tests", "--", "--test-threads=1"],
-        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
-         "-p", "arcadium_update", "-p", "arcadium_common", "-p", "arcadium_java",
-         "-p", "arcadium_core", "-p", "arcadium_content", "-p", "arcadium_discord", "--lib", "--", "--test-threads=1"],
-        ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
-         "-p", "arcadium_app", "--lib", "account_service", "--", "--test-threads=1"],
-        [sys.executable, "scripts/test_macos_updater.py"],
-        [sys.executable, "scripts/test_native_cookie_consent.py", "--target", target,
-         "--profile", "macos-testing", "--output", "build/native-cookie-consent-tests.json"],
-        [sys.executable, "scripts/build_macos.py", "--target", target],
-        [sys.executable, "scripts/check_macos_compatibility.py", "--binary",
-         str(target_dir / target / "macos-testing/Arcadium"), "--target", target, "--minimum", minimum,
-         "--static-root", str(target_dir / target / "macos-testing"), "--fetch-sdk",
-         "--output", "build/macos-compatibility-tests.json"],
-        [sys.executable, "scripts/smoke_native_helpers.py", "--executable",
-         str(target_dir / target / "macos-testing/Arcadium"), "--output", "build/macos-native-helper-tests.json"],
+    steps = [
+        ("pythonCompatibility", [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                                  "-p", "test_macos_compatibility.py"]),
+        ("rustAuth", ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+                      "-p", "arcadium_auth", "--lib", "--tests", "--", "--test-threads=1"]),
+        ("rustCore", ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+                      "-p", "arcadium_update", "-p", "arcadium_common", "-p", "arcadium_java",
+                      "-p", "arcadium_core", "-p", "arcadium_content", "-p", "arcadium_discord",
+                      "--lib", "--", "--test-threads=1"]),
+        ("rustAccounts", ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+                          "-p", "arcadium_app", "--lib", "account_service", "--", "--test-threads=1"]),
+        ("rustTheme", ["cargo", "test", "--locked", "--profile", "macos-testing", "--target", target,
+                       "-p", "arcadium_app", "--lib", "theme::accent::tests", "--", "--test-threads=1"]),
+        ("macosUpdater", [sys.executable, "scripts/test_macos_updater.py"]),
+        ("nativeCookieConsent", [sys.executable, "scripts/test_native_cookie_consent.py", "--target", target,
+                                  "--profile", "macos-testing", "--fetch-dependencies",
+                                  "--output", "build/native-cookie-consent-tests.json"]),
+        ("package", [sys.executable, "scripts/build_macos.py", "--target", target]),
+        ("binaryCompatibility", [sys.executable, "scripts/check_macos_compatibility.py", "--binary",
+                                   str(target_dir / target / "macos-testing/Arcadium"), "--target", target,
+                                   "--minimum", minimum, "--static-root", str(target_dir / target / "macos-testing"),
+                                   "--fetch-sdk", "--output", "build/macos-compatibility-tests.json"]),
+        ("nativeHelpers", [sys.executable, "scripts/smoke_native_helpers.py", "--executable",
+                            str(target_dir / target / "macos-testing/Arcadium"),
+                            "--output", "build/macos-native-helper-tests.json"]),
     ]
-    for index, command in enumerate(commands):
-        print(f"Private build step {index + 1}/{len(commands)} started", flush=True)
-        log.write(f"Private build step {index + 1}/{len(commands)}\n".encode())
+    checks_path = source / "build/package-checks.json"
+    checks_path.parent.mkdir(parents=True, exist_ok=True)
+    checks = {"schema": 1, "mode": "package", "platform": platform, "passed": False,
+              "componentHashesBefore": True, "componentHashesAfter": False,
+              "jvmFixtures": fixtures.is_file(), "steps": []}
+
+    def write_checks():
+        checks_path.write_text(json.dumps(checks, indent=2) + "\n", encoding="utf-8")
+
+    write_checks()
+    for index, (name, command) in enumerate(steps):
+        step = {"name": name, "command": command, "status": "running"}
+        checks["steps"].append(step)
+        write_checks()
+        print(f"Private build step {index + 1}/{len(steps)}: {name} started", flush=True)
+        log.write(f"Private build step {index + 1}/{len(steps)}: {name}\n".encode())
         log.flush()
-        result = subprocess.run(command, cwd=source, env=environment, stdout=log,
+        result = subprocess.run(command, cwd=source, env=environment, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, timeout=7200)
+        log.write(result.stdout)
+        log.flush()
+        step.update(status="passed" if result.returncode == 0 else "failed", exitCode=result.returncode)
+        if name.startswith("rust") and result.returncode == 0:
+            summaries = re.findall(r"test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out",
+                                   result.stdout.decode("utf-8", errors="replace"))
+            if not summaries or any(int(row[1]) for row in summaries) or sum(int(row[0]) for row in summaries) == 0:
+                raise ValueError("Rust verification reported no passing tests")
+            step["testSummaries"] = [{"passed": int(row[0]), "failed": int(row[1]), "ignored": int(row[2]),
+                                      "measured": int(row[3]), "filteredOut": int(row[4])} for row in summaries]
+        write_checks()
         if result.returncode:
             return result.returncode
-        print(f"Private build step {index + 1}/{len(commands)} completed", flush=True)
+        print(f"Private build step {index + 1}/{len(steps)}: {name} completed", flush=True)
     verify_components(source)
+    checks.update(componentHashesAfter=True, passed=True)
+    write_checks()
     return 0
 
 
@@ -377,6 +405,9 @@ def seal(source, private_log, destination, platform, key, exit_code, mode="packa
             if checks.is_file():
                 archive.write(checks, checks.relative_to(source).as_posix())
         else:
+            checks = source / "build/package-checks.json"
+            if checks.is_file():
+                archive.write(checks, checks.relative_to(source).as_posix())
             java_result = source / "build/forge-compat-ci-tests.json"
             if java_result.is_file():
                 archive.write(java_result, java_result.relative_to(source).as_posix())
